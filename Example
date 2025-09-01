@@ -1,0 +1,779 @@
+#1.モジュールのインポート
+import pandas as pd
+import numpy as np
+import scipy.stats as st
+
+#Algorithm
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.naive_bayes import ComplementNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier,AdaBoostClassifier
+
+#SMOTE
+from imblearn.over_sampling import SMOTE
+
+#Data Split
+from sklearn.model_selection import RepeatedStratifiedKFold,train_test_split
+
+#Scaling
+from sklearn.preprocessing import MinMaxScaler
+
+#Score
+from sklearn.metrics import confusion_matrix, make_scorer, accuracy_score, recall_score, precision_score, f1_score,cohen_kappa_score,roc_auc_score,roc_curve
+
+#Optimaization
+import optuna
+
+#Other
+import warnings
+import sklearn
+from sklearn import metrics
+
+
+
+#２.関数を定義する
+def cross_validation(X, y, cv, model, scalers, oversampling):
+    # A cross_val function corresponding to a binary categorical target variable.
+    # X: explanatory variable, dataframe type
+    # y: target variable
+    # cv: cross-validation method
+    # model: model to be learned
+    # scaler: whether scaling is performed or not
+    # oversampling: whether oversampling is performed or not→insert SMOTE(random_state=seed)
+
+    score_accuracy_val = []
+    score_precison_val = []
+    score_sensitivity_val = []
+    score_specificity_val = []
+    score_f1_val = []
+    score_Kappa_val = []
+    score_auc_val = []
+
+    warnings.simplefilter('ignore', UserWarning)  
+    warnings.simplefilter('ignore', FutureWarning)  
+
+    X_array = np.array(X.index) 
+    for train, val in cv.split(X_array, y):
+        
+        train_index = X_array[train]
+        val_index = X_array[val]
+
+        # Extract only the rows that will be the train data
+        X_tra = X.loc[train_index, :]
+        y_tra = y[train_index]
+
+        # Extract the rows for val data
+        X_val = X.loc[val_index, :]
+        y_val = y[val_index]
+
+        if oversampling == "oversampling NO":
+            
+            # Extract only the rows that will be the train data
+            X_tra_ovs = X_tra
+            y_tra_ovs = y_tra
+
+        elif oversampling == oversampling:
+            ovs = oversampling
+            X_tra_ovs, y_tra_ovs = ovs.fit_resample(X_tra, y_tra)
+
+        if scalers == "Scaler No":
+            X_tra_ovs_sc = X_tra_ovs
+            # Extract the rows for val data
+            X_val_sc = X.loc[val_index, :]
+            
+        elif scalers == "MinMax":
+            # Select the columns of continuous variables
+            numeric_cols = X_tra_ovs.select_dtypes(include=["float64"]).columns
+
+            # Combine the columns of discrete variables with the dataset
+            discrete_cols = X_tra_ovs.select_dtypes(include=["uint8"]).columns
+
+            # Normalization
+            scaler = MinMaxScaler()
+
+            # Fit the scaler to the training data and standardize the train
+            scaler.fit(X_tra[numeric_cols])
+            X_tra_ovs.loc[:, numeric_cols] = scaler.transform(X_tra_ovs.loc[:, numeric_cols])  # You can also combine fit_transform.
+
+            # Combine the columns of discrete variables with the dataset
+            X_tra_ovs_sc = pd.concat([X_tra_ovs.loc[:, discrete_cols], X_tra_ovs.loc[:, numeric_cols]], axis=1)
+
+            # Standardize the validation data using the scaler fitted on the training data
+            X_val.loc[:, numeric_cols] = scaler.transform(X_val.loc[:, numeric_cols])
+
+            # Combine the columns of discrete variables with the dataset
+            X_val_sc = pd.concat([X_val.loc[:, discrete_cols], X_val.loc[:, numeric_cols]], axis=1)
+
+        model.fit(X_tra_ovs_sc, y_tra_ovs)
+
+        # Return the predicted values of the training data
+        # threshold=0.5
+
+        y_pred_v = model.predict(X_val_sc)
+
+        if type(model) == sklearn.svm._classes.SVC:
+            
+            prob_val = model.decision_function(X_val_sc)
+            
+        else:
+            
+            prob_val = model.predict_proba(X_val_sc)[:, 1]
+
+        # Calculate the scores on the validation data.
+        accuracy_val = accuracy_score(y_val, y_pred_v)
+        precision_val = precision_score(y_val, y_pred_v)
+        sensitivity_val = recall_score(y_val, y_pred_v)
+        
+        # クロス集計表の作成
+        conf_matrix = confusion_matrix(y_val, y_pred_v)
+
+        # クロス集計表から必要な指標を計算
+        tn, fp, fn, tp = conf_matrix.ravel()
+        specificity_val = tn / (tn + fp)
+        
+        f1_val = f1_score(y_val, y_pred_v)
+        
+        kappa_val = cohen_kappa_score(y_val, y_pred_v)
+
+        fpr, tpr, thresholds = roc_curve(y_val, prob_val)
+        auc_val = metrics.auc(fpr, tpr)
+
+        
+        #各foldのscoreを保存する
+        score_accuracy_val.append(accuracy_val)
+        score_precison_val.append(precision_val)
+        score_sensitivity_val.append(sensitivity_val)
+        score_specificity_val.append(specificity_val)
+        score_f1_val.append(f1_val)
+        score_Kappa_val.append(kappa_val)
+        score_auc_val.append(auc_val)
+        
+        
+    return {
+            "accuracy_val":score_accuracy_val,
+            "precision_val":score_precison_val,
+            "sensitivity_val":score_sensitivity_val,
+            "specificity_val":score_specificity_val,
+            "f1_val":score_f1_val,
+            "Kappa_val":score_Kappa_val,
+            "auc_val":score_auc_val
+           }
+
+
+
+
+
+3.Data split
+Data = pd.read_csv("data.csv",encoding="utf_8_sig",index_col=0)
+X = Data.drop(["AKI"],axis=1)
+y = Data.loc[:,"AKI"]
+i_seed_split = ○○
+X_train, X_test, y_train, y_test = train_test_split(X,y, test_size=0.4,random_state=i_seed_split,stratify=y)
+
+
+
+#4.モデルの開発
+
+%%time
+seed = △△#seed値
+rskf = RepeatedStratifiedKFold(random_state = seed ,n_splits=3, n_repeats=5)
+smote = SMOTE(random_state=11)
+
+
+result_hyper = pd.DataFrame(columns=["Algorithm","C","gamma","degree","alpha",
+                                     "max_depth","min_samples_split","min_samples_leaf",
+                                     "max_leaf_nodes","n_estimators"])
+
+
+# Oputunaの途中経過の表示を無効にする
+optuna.logging.set_verbosity(optuna.logging.CRITICAL)
+
+
+
+################## LASSO ###########################################################################
+
+
+#lasso
+result_hyper.loc[0,"Algorithm"]="Lasso regression_Class weighting technique"#OK
+
+LASSO = LogisticRegression(penalty='l1',
+                           solver="liblinear",
+                           class_weight="balanced",#OK
+                           random_state=seed,max_iter=10000
+                          )
+
+
+def bayes_objective(trial):
+    params = {
+        "C": trial.suggest_float("C", 10**(-3), 10**(1), log=True)
+    }   
+
+    # モデルにパラメータ適用
+
+    LASSO.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,LASSO,"MinMax","oversampling NO")#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+study_lasso = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_lasso.optimize(bayes_objective, n_trials=100)#探索回数100回
+result_hyper.loc[0,"C"] = study_lasso.best_params['C']#OK
+
+
+print("LASSO")
+
+
+#LASSO_SMOTE
+result_hyper.loc[1,"Algorithm"]="Lasso regression_SMOTE"#OK
+
+LASSO_smote = LogisticRegression(penalty='l1', 
+                                 solver="liblinear",
+                                 random_state=seed,
+                                 max_iter=10000)
+
+def bayes_objective(trial):
+    params = {
+        "C": trial.suggest_float("C", 10**(-3), 10**(1), log=True)}
+
+    # モデルにパラメータ適用
+
+    LASSO_smote.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,LASSO_smote,"MinMax",smote)#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+study_lasso_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_lasso_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+result_hyper.loc[1,"C"] = study_lasso_smote.best_params['C']#OK
+
+print("LASSO_SMOTE")
+
+
+################## LASSO ##############################################################################################
+
+
+
+################## SVM with gaussian kernel ###########################################################################
+    
+#SVM with gaussian kernel   
+result_hyper.loc[2,"Algorithm"]="SVM with gaussian kernel_Class weighting technique"#OK
+
+SVM_rbf = SVC(random_state=seed,
+              class_weight="balanced",#OK
+              kernel="rbf",#OK
+              probability=False)
+
+def bayes_objective(trial):
+    params = {
+        "gamma": trial.suggest_float("gamma", 10**(-3), 10**(-1),log=True),
+        "C":trial.suggest_float("C", 10**(-3), 10**(1),log=True)}
+
+    # モデルにパラメータ適用
+    SVM_rbf.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,SVM_rbf,"MinMax","oversampling NO")#OK
+    val = np.median(scores["f1_val"])#OK
+    
+    return val
+
+# ベイズ最適化を実行
+study_SVM_rbf = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_SVM_rbf.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[2,"gamma"] = study_SVM_rbf.best_params['gamma']#OK
+result_hyper.loc[2,"C"] = study_SVM_rbf.best_params['C']#OK
+
+
+print("SVM with gaussian kernel")
+
+
+#SVM_rbf_SMOTE
+result_hyper.loc[3,"Algorithm"]="SVM with gaussian kernel_SMOTE"#OK
+
+SVM_rbf_smote = SVC(random_state=seed,
+                    kernel="rbf",#OK
+                    probability=False)
+
+def bayes_objective(trial):
+    params = {
+        "gamma": trial.suggest_float("gamma", 10**(-3), 10**(-1),log=True),
+        "C":trial.suggest_float("C", 10**(-3), 10**(1),log=True)}
+
+    # モデルにパラメータ適用
+    SVM_rbf_smote.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,SVM_rbf_smote,"MinMax",smote)#OK
+    val = np.median(scores["f1_val"])#OK
+    
+    return val
+
+study_SVM_rbf_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_SVM_rbf_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[3,"gamma"] = study_SVM_rbf_smote.best_params['gamma']#OK
+result_hyper.loc[3,"C"] = study_SVM_rbf_smote.best_params['C']#OK
+
+print("SVM with gaussian kernel_SMOTE")
+
+
+
+
+################## SVM with gaussian kernel ###########################################################################
+
+################## SVM with linear kernel ###########################################################################
+
+
+
+
+#SVM with linear kernel
+result_hyper.loc[4,"Algorithm"]="SVM with linear kernel_Class weighting technique"#OK
+
+SVM_linear = SVC(random_state=seed,
+                 class_weight="balanced",#OK
+                 kernel="linear",#OK
+                 probability=False
+                )
+
+def bayes_objective(trial):
+    params = {
+        "gamma": trial.suggest_float("gamma", 10**(-3), 10**(-1),log=True),
+        "C":trial.suggest_float("C", 10**(-3), 10**(1),log=True)}
+
+    # モデルにパラメータ適用
+    SVM_linear.set_params(**params)
+    scores = cross_validation(X_train, y_train,rskf,SVM_linear,"MinMax","oversampling NO")#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+
+study_SVM_linear = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_SVM_linear.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[4,"gamma"] = study_SVM_linear.best_params['gamma']
+result_hyper.loc[4,"C"] = study_SVM_linear.best_params['C']
+
+print("SVM with linear kernel_Class weighting technique")
+
+
+
+
+
+#SVM with linear kernel_SMOTE
+result_hyper.loc[5,"Algorithm"]="SVM with linear kernel_SMOTE"#OK
+
+SVM_linear_smote = SVC(
+                       random_state=seed,
+                       kernel="linear",#OK
+                       probability=False
+                      )
+
+def bayes_objective(trial):
+    params = {
+        "gamma": trial.suggest_float("gamma", 10**(-3), 10**(-1),log=True),
+        "C":trial.suggest_float("C", 10**(-3), 10**(1),log=True)}
+
+    # モデルにパラメータ適用
+    SVM_linear_smote.set_params(**params)
+    scores = cross_validation(X_train, y_train,rskf,SVM_linear_smote,"MinMax",smote)#OK
+
+    val = np.median(scores["f1_val"])
+    return val
+
+
+study_SVM_linear_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_SVM_linear_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+result_hyper.loc[5,"gamma"] = study_SVM_linear_smote.best_params['gamma']#OK
+result_hyper.loc[5,"C"] = study_SVM_linear_smote.best_params['C']#OK
+
+print("SVM with linear kernel_SMOTE")
+
+
+################## SVM with linear kernel ###########################################################################
+
+################## SVM with polynomial kernel ###########################################################################
+
+
+
+
+#SVM with polynomial kernel
+result_hyper.loc[6,"Algorithm"]="SVM with polynomial kernel_Class weighting technique"#OK
+
+SVM_poly = SVC(random_state=seed,
+               class_weight="balanced",#OK
+               kernel="poly",#OK
+               probability=False)
+
+def bayes_objective(trial):
+    params = {
+        "gamma": trial.suggest_float("gamma", 10**(-3), 10**(-1),log=True),
+        "C":trial.suggest_float("C", 10**(-3), 10**(1),log=True),
+        "degree":trial.suggest_int("degree",1,10,log=True)}
+
+    # モデルにパラメータ適用
+    SVM_poly.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,SVM_poly,"MinMax","oversampling NO")#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_SVM_poly = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_SVM_poly.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[6,"gamma"] = study_SVM_poly.best_params['gamma']#OK
+result_hyper.loc[6,"C"] = study_SVM_poly.best_params['C']#OK
+result_hyper.loc[6,"degree"] = study_SVM_poly.best_params['degree']#OK
+
+print("SVM with polynomial kernel_Class weighting technique")
+
+
+
+#SVM with polynomial kernel_SMOTE
+result_hyper.loc[7,"Algorithm"]="SVM with polynomial kernel_SMOTE"#OK
+
+SVM_poly_smote = SVC(random_state=seed,
+                     kernel="poly",#OK
+                     probability=False)
+
+def bayes_objective(trial):
+    params = {
+        "gamma": trial.suggest_float("gamma", 10**(-3), 10**(-1),log=True),
+        "C":trial.suggest_float("C", 10**(-3), 10**(1),log=True),
+        "degree":trial.suggest_int("degree",1,10,log=True)}
+
+    # モデルにパラメータ適用
+    SVM_poly_smote.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,SVM_poly_smote,"MinMax",smote)#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_SVM_poly_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_SVM_poly_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[7,"gamma"] = study_SVM_poly_smote.best_params['gamma']#OK
+result_hyper.loc[7,"C"] = study_SVM_poly_smote.best_params['C']#OK
+result_hyper.loc[7,"degree"] = study_SVM_poly_smote.best_params['degree']#OK
+
+
+print("SVM with polynomial kernel_SMOTE")
+
+################## SVM with polynomial kernel ###########################################################################
+################## Naive Bayes classifer  ###########################################################################
+
+
+
+#Naive Bayes
+result_hyper.loc[8,"Algorithm"]="Complement naïve Bayes classifier_Class weighting technique"#OK
+
+NB = ComplementNB()#random_stateの概念がない#OK
+
+
+def bayes_objective(trial):
+    params = {
+        "alpha": trial.suggest_float("alpha", 10**(-3), 10**(1), log=True)}
+
+    # モデルにパラメータ適用
+    NB.set_params(**params)
+    scores = cross_validation(X_train, y_train,rskf,NB,"MinMax","oversampling NO")#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_ComNB = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=42))
+study_ComNB.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[8,"alpha"] = study_ComNB.best_params['alpha']#OK
+
+print("Complement naïve Bayes classifier_Class weighting technique")
+
+
+
+#Naive Bayes_SMOTE
+result_hyper.loc[9,"Algorithm"]="Complement naïve Bayes classifier_SMOTE"#OK
+
+NB_smote = ComplementNB()#random_stateの概念がない#OK
+
+
+def bayes_objective(trial):
+    params = {
+        "alpha": trial.suggest_float("alpha", 10**(-3), 10**(1), log=True)}
+
+    # モデルにパラメータ適用
+    NB_smote.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,NB_smote,"MinMax",smote)#標準化→SMOTE#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_ComNB_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=42))
+study_ComNB_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[9,"alpha"] = study_ComNB_smote.best_params['alpha']#OK
+
+print("Complement naïve Bayes classifier_SMOTE")
+
+
+################## Naive Bayes classifer  ###########################################################################
+################## Decision tree   ###########################################################################
+
+
+
+
+#Decision tree
+result_hyper.loc[10,"Algorithm"]="Decision tree_Class weighting technique"#OK
+
+DT = DecisionTreeClassifier(random_state=seed,class_weight="balanced")#OK
+def bayes_objective(trial):
+    params = {
+        "max_depth": trial.suggest_int("max_depth", 2, 10),
+        "min_samples_split":trial.suggest_int("min_samples_split", 30, 100),
+        "min_samples_leaf":trial.suggest_int("min_samples_leaf", 30, 50),
+        "max_leaf_nodes":trial.suggest_int("max_leaf_nodes",10,20),
+        "max_features":trial.suggest_int("max_features",7,9)#13→9
+    }
+
+    # モデルにパラメータ適用
+    DT.set_params(**params)#OK
+    scores = cross_validation(X_train, y_train,rskf,DT,"Scaler No","oversampling NO")#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_DT = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_DT.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[10,"max_depth"] = study_DT.best_params['max_depth']#OK
+result_hyper.loc[10,"min_samples_split"] = study_DT.best_params['min_samples_split']#OK
+result_hyper.loc[10,"min_samples_leaf"] = study_DT.best_params['min_samples_leaf']    #OK
+result_hyper.loc[10,"max_leaf_nodes"] = study_DT.best_params['max_leaf_nodes']#OK
+result_hyper.loc[10,"max_features"] = study_DT.best_params['max_features']#OK
+
+print("Decision tree_Class weighting technique")
+
+
+
+result_hyper.loc[11,"Algorithm"]="Decision tree_SMOTE"#OK
+
+DT_smote = DecisionTreeClassifier(random_state=seed)#OK
+
+def bayes_objective(trial):
+    params = {
+        "max_depth": trial.suggest_int("max_depth", 2, 10),#OK
+        "min_samples_split":trial.suggest_int("min_samples_split", 30, 100),#OK
+        "min_samples_leaf":trial.suggest_int("min_samples_leaf", 30, 50),#OK
+        "max_leaf_nodes":trial.suggest_int("max_leaf_nodes",10,20),#OK
+        "max_features":trial.suggest_int("max_features",7,9)#13→9#OK
+    }
+
+    # モデルにパラメータ適用
+    DT_smote.set_params(**params)
+    scores = cross_validation(X_train, y_train,rskf,DT_smote,"Scaler No",smote)#標準化→SMOTE#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_DT_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_DT_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[11,"max_depth"] = study_DT_smote.best_params['max_depth']#OK
+result_hyper.loc[11,"min_samples_split"] = study_DT_smote.best_params['min_samples_split']#OK
+result_hyper.loc[11,"min_samples_leaf"] = study_DT_smote.best_params['min_samples_leaf']   #OK 
+result_hyper.loc[11,"max_leaf_nodes"] = study_DT_smote.best_params['max_leaf_nodes']#OK
+result_hyper.loc[11,"max_features"] = study_DT_smote.best_params['max_features']#OK
+
+print("Decision tree_SMOTE")
+
+################## Decision tree   ###########################################################################
+
+################## Random forest   ###########################################################################
+
+
+
+#Random forest
+result_hyper.loc[12,"Algorithm"]="Random forest_Class weighting technique"#OK
+
+RF = RandomForestClassifier(random_state=seed,class_weight="balanced")#OK
+
+#update on 2024 by TH, n_estimatorsを2,1000の範囲で探索する様にしました
+def bayes_objective(trial):
+    params = {
+        "max_depth": trial.suggest_int("max_depth", 2, 10),#OK
+        "min_samples_split":trial.suggest_int("min_samples_split", 30, 100),#OK
+        "min_samples_leaf":trial.suggest_int("min_samples_leaf", 30, 50),#OK
+        "max_features":trial.suggest_int("max_features", 7, 9),#OK
+        "max_leaf_nodes":trial.suggest_int("max_leaf_nodes", 10, 20),#OK
+        "n_estimators":trial.suggest_int("n_estimators",2,1000)#OK
+    }
+
+    # モデルにパラメータ適用
+    RF.set_params(**params)
+    scores = cross_validation(X_train, y_train,rskf,RF,"Scaler No","oversampling NO")#OK
+
+    val = np.median(scores["f1_val"])
+    return val
+
+# ベイズ最適化を実行
+study_RF = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_RF.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+
+
+result_hyper.loc[12,"max_depth"] = study_RF.best_params['max_depth']#OK
+result_hyper.loc[12,"min_samples_split"] = study_RF.best_params['min_samples_split']#OK
+result_hyper.loc[12,"min_samples_leaf"] = study_RF.best_params['min_samples_leaf']    #OK
+result_hyper.loc[12,"max_features"] = study_RF.best_params['max_features']#OK
+result_hyper.loc[12,"max_leaf_nodes"] = study_RF.best_params['max_leaf_nodes']#OK
+result_hyper.loc[12,"n_estimators"] = study_RF.best_params['n_estimators']#OK
+
+print("Rnadom forest_Class weighting technique")
+
+
+result_hyper.loc[13,"Algorithm"]="Random forest_SMOTE"#OK
+
+RF_smote = RandomForestClassifier(random_state=seed)#OK
+
+#update on 2024 by TH, n_estimatorsを2,1000の範囲で探索する様にしました
+def bayes_objective(trial):
+    params = {
+        "max_depth": trial.suggest_int("max_depth", 2, 10),#OK
+        "min_samples_split":trial.suggest_int("min_samples_split", 30, 100),#OK
+        "min_samples_leaf":trial.suggest_int("min_samples_leaf", 30, 50),#OK
+        "max_features":trial.suggest_int("max_features", 7, 9),#OK
+        "max_leaf_nodes":trial.suggest_int("max_leaf_nodes", 10, 20),#OK
+        "n_estimators":trial.suggest_int("n_estimators",2,1000)#OK
+    }
+
+    # モデルにパラメータ適用
+    RF_smote.set_params(**params)
+    scores = cross_validation(X_train, y_train,rskf,RF_smote,"Scaler No",smote)#標準化→SMOTE#OK
+
+    val = np.median(scores["f1_val"])
+    return val
+
+# ベイズ最適化を実行
+study_RF_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_RF_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[13,"max_depth"] = study_RF_smote.best_params['max_depth']#OK
+result_hyper.loc[13,"min_samples_split"] = study_RF_smote.best_params['min_samples_split']#OK
+result_hyper.loc[13,"min_samples_leaf"] = study_RF_smote.best_params['min_samples_leaf']  #OK  
+result_hyper.loc[13,"max_features"] = study_RF_smote.best_params['max_features']#OK
+result_hyper.loc[13,"max_leaf_nodes"] = study_RF_smote.best_params['max_leaf_nodes']#OK
+result_hyper.loc[13,"n_estimators"] = study_RF_smote.best_params['n_estimators']#OK
+
+print("Rnadom forest_SMOTE")
+
+################## Random forest   ###########################################################################
+
+################## AdaBoost   ###########################################################################
+
+
+#AdaBoost
+result_hyper.loc[14,"Algorithm"]="AdaBoost_Class weighting technique"#OK
+
+def bayes_objective(trial):
+    #ハイパーパラメータ範囲
+    max_depth = trial.suggest_int("max_depth", 2, 10)#OK
+    min_samples_split = trial.suggest_int("min_samples_split", 30, 100)#OK
+    min_samples_leaf = trial.suggest_int("min_samples_leaf", 30, 50)#OK
+    max_leaf_nodes = trial.suggest_int("max_leaf_nodes",10,20)#OK
+    max_features = trial.suggest_int("max_features",7,9)#OK
+    
+    
+    #決定木ベースの分類木を作成
+    estimator = DecisionTreeClassifier(random_state = seed,
+                                       class_weight = "balanced",#OK
+                                       max_depth = max_depth,
+                                       min_samples_split = min_samples_split,
+                                       min_samples_leaf = min_samples_leaf,
+                                       max_leaf_nodes = max_leaf_nodes,
+                                       max_features = max_features
+                                      )
+                                  
+    # AdaBoost分類器を作成
+    ada = AdaBoostClassifier(estimator=estimator,
+                             n_estimators = 10,
+                             random_state = seed
+                            )
+                                  
+    #bestなn_etimatorを使用
+
+    
+
+    scores = cross_validation(X_train,y_train,rskf,ada,"Scaler No","oversampling NO")#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_ada = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_ada.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[14,"max_depth"] = study_ada.best_params['max_depth']#OK
+result_hyper.loc[14,"min_samples_split"] = study_ada.best_params['min_samples_split']#OK
+result_hyper.loc[14,"min_samples_leaf"] = study_ada.best_params['min_samples_leaf']#OK    
+result_hyper.loc[14,"max_leaf_nodes"] = study_ada.best_params['max_leaf_nodes']#OK
+result_hyper.loc[14,"max_features"] = study_ada.best_params['max_features']#OK
+
+print("AdaBoost_Class weighting technique")
+                                  
+                                  
+                                  
+#AdaBoost_SMOTE
+result_hyper.loc[15,"Algorithm"]="AdaBoost_SMOTE"#OK
+                                  
+def bayes_objective(trial):
+    #ハイパーパラメータ範囲
+    max_depth = trial.suggest_int("max_depth", 2, 10)#OK
+    min_samples_split = trial.suggest_int("min_samples_split", 30, 100)#OK
+    min_samples_leaf = trial.suggest_int("min_samples_leaf", 30, 50)#OK
+    max_leaf_nodes = trial.suggest_int("max_leaf_nodes",10,20)#OK
+    max_features = trial.suggest_int("max_features",7,9)#OK
+    
+    estimator = DecisionTreeClassifier(random_state = seed,
+                                       max_depth = max_depth,
+                                       min_samples_split = min_samples_split,
+                                       min_samples_leaf = min_samples_leaf,
+                                       max_leaf_nodes = max_leaf_nodes,
+                                       max_features = max_features
+                                      )
+                                  
+    # AdaBoost分類器を作成
+    ada_smote = AdaBoostClassifier(estimator=estimator,
+                                   n_estimators = 10,
+                                   random_state = seed
+                                  )
+    
+
+    scores = cross_validation(X_train,y_train,rskf,ada_smote,"Scaler No",smote)#標準化→SMOTE#OK
+
+    val = np.median(scores["f1_val"])#OK
+    return val
+
+# ベイズ最適化を実行
+study_ada_smote = optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=seed))
+study_ada_smote.optimize(bayes_objective, n_trials=100)#探索回数100回
+
+result_hyper.loc[15,"max_depth"] = study_ada_smote.best_params['max_depth']#OK
+result_hyper.loc[15,"min_samples_split"] = study_ada_smote.best_params['min_samples_split']#OK
+result_hyper.loc[15,"min_samples_leaf"] = study_ada_smote.best_params['min_samples_leaf']  #OK  
+result_hyper.loc[15,"max_leaf_nodes"] = study_ada_smote.best_params['max_leaf_nodes']#OK
+result_hyper.loc[15,"max_features"] = study_ada_smote.best_params['max_features']#OK
+
+print("AdaBoost_SMOTE")
+################## AdaBoost   ###########################################################################
+
+################## Result   ###########################################################################
+
+
+result_hyper.to_csv("result_hyperparam.csv",encoding="utf_8_sig")
+
+
