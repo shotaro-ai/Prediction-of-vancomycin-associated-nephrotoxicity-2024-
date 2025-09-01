@@ -704,10 +704,6 @@ def bayes_objective(trial):
                              random_state = seed
                             )
                                   
-    #bestなn_etimatorを使用
-
-    
-
     scores = cross_validation(X_train,y_train,rskf,ada,"Scaler No","oversampling NO")#OK
 
     val = np.median(scores["f1_val"])#OK
